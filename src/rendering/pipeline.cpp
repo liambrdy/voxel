@@ -191,6 +191,21 @@ Pipeline CreateComputePipeline(const std::string &shaderPath) {
         bindings.push_back(binding);
     }
 
+
+    std::vector<VkPushConstantRange> pushRanges;
+
+    const auto &push = resources.push_constant_buffers;
+    if (!push.empty()) {
+        uint32_t id = push[0].id;
+        for (auto &ranges : comp.get_active_buffer_ranges(id)) {
+            VkPushConstantRange range = {};
+            range.size = ranges.range;
+            range.offset = ranges.offset;
+            range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            pushRanges.push_back(range);
+        }
+    }
+
     VkDescriptorSetLayoutCreateInfo setLayoutInfo = GetDescriptorsetLayoutCreatInfo(bindings);
     vkCreateDescriptorSetLayout(context.device, &setLayoutInfo, nullptr, &pipeline.setLayout);
 
@@ -198,7 +213,7 @@ Pipeline CreateComputePipeline(const std::string &shaderPath) {
     VkDescriptorSetAllocateInfo setAllocInfo = GetDescriptorSetAllocateInfo(context.descriptorPool, layouts);
     vkAllocateDescriptorSets(context.device, &setAllocInfo, &pipeline.set);
 
-    VkPipelineLayoutCreateInfo layoutInfo = GetPipelineLayoutCreateInfo(layouts, {});
+    VkPipelineLayoutCreateInfo layoutInfo = GetPipelineLayoutCreateInfo(layouts, pushRanges);
     vkCreatePipelineLayout(context.device, &layoutInfo, nullptr, &pipeline.layout);
 
     VkComputePipelineCreateInfo pipelineInfo = {};

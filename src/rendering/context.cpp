@@ -284,17 +284,68 @@ Result InitializeRenderContext(SDL_Window *window) {
     return Success;
 }
 
+void UploadVoxelData(const std::vector<int> &data) {
+    context.voxelData = CreateBuffer(sizeof(int) * data.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+    CopyToBuffer(&context.voxelData, (uint8_t*)data.data(), sizeof(int) * data.size());
+
+    VkDescriptorBufferInfo bufferInfo = {};
+    bufferInfo.buffer = context.voxelData.buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.pNext = nullptr;
+    write.dstSet = context.computePipeline.set;
+    write.dstBinding = 1;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pImageInfo = nullptr;
+    write.pBufferInfo = &bufferInfo;
+    write.pTexelBufferView = nullptr;
+
+    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
+
+    VkCommandBuffer cmd = BeginSingleUseCmd();
+
+    VkBufferMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = context.voxelData.buffer;
+    barrier.offset = 0;
+    barrier.size = VK_WHOLE_SIZE;
+
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0, nullptr,
+        1, &barrier,
+        0, nullptr
+    );
+
+    EndSingleUseCmd(cmd);
+}
+
 Result RenderFrame() {
     FrameData &frame = context.frames[context.frameCount % MaxFramesInFlight];
 
     vkWaitForFences(context.device, 1, &frame.computeFence, VK_TRUE, UINT64_MAX);
     vkResetFences(context.device, 1, &frame.computeFence);
 
+    float time = SDL_GetTicks();
+
     VkCommandBufferBeginInfo beginInfo = GetCommandBufferBeginInfo(0);
     vkBeginCommandBuffer(frame.computeCmd, &beginInfo);
 
     vkCmdBindPipeline(frame.computeCmd, VK_PIPELINE_BIND_POINT_COMPUTE, context.computePipeline.pipeline);
     vkCmdBindDescriptorSets(frame.computeCmd, VK_PIPELINE_BIND_POINT_COMPUTE, context.computePipeline.layout, 0, 1, &context.computePipeline.set, 0, nullptr);
+    vkCmdPushConstants(frame.computeCmd, context.computePipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(time), &time);
 
     vkCmdDispatch(frame.computeCmd, context.renderImage.width / 16, context.renderImage.height / 16, 1);
 

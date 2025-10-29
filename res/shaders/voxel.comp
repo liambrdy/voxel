@@ -4,9 +4,77 @@ layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout (set = 0, binding = 0) uniform writeonly image2D outputImage;
 
+layout (set = 0, binding = 1, std430) buffer VoxelData {
+    int voxels[];
+};
+
+const int WIDTH = 64;
+const int HEIGHT = 64;
+const int DEPTH = 64;
+
+const float tMAX = 100.0;
+
+layout (push_constant) uniform constants {
+    float time;
+} PushConstants;
+
+uvec3 clampPosition(vec3 pos) {
+    return clamp(uvec3(floor(pos)), uvec3(0), uvec3(WIDTH - 1));
+}
+
+uint positionToIndex(uvec3 pos) {
+    return pos.x + pos.y * WIDTH + pos.z * WIDTH * HEIGHT;
+}
+
 void main() {
-    ivec2 uv = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    ivec2 loc = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
     ivec2 size = imageSize(outputImage);
+    float aspectRatio = float(size.x) / float(size.y);
+
+    vec3 target = vec3(WIDTH / 2, HEIGHT / 2, DEPTH / 2);
+    float dist = 35;
+    float slowedTime = PushConstants.time * 0.001;
+
+    float fov = radians(60.0);
+    float focalLength = 1.0 / tan(fov / 2.0);
+    float viewportHeight = 2.0;
+    float viewportWidth = viewportHeight * aspectRatio;
+    vec3 cameraCenter = vec3(target.x + dist * sin(slowedTime), target.y, target.z + dist * cos(slowedTime));
     
-    imageStore(outputImage, uv, vec4(float(uv.x) / size.x, float(uv.y) / size.y, 0.4, 1.0));
+    vec3 forward = normalize(target - cameraCenter);
+    vec3 worldUp = vec3(0.0, 1.0, 0.0);
+    vec3 right = normalize(cross(forward, worldUp));
+    vec3 up = cross(right, forward);
+
+    vec3 viewportU = viewportWidth * right;
+    vec3 viewportV = viewportHeight*up;
+    vec3 focal = focalLength * forward;
+
+    vec3 pixelDeltaU = viewportU / size.x;
+    vec3 pixelDeltaV = viewportV / size.y;
+
+    vec3 viewportBottomLeft = cameraCenter + focal - viewportU/2 - viewportV/2;
+    vec3 pixel00Loc = viewportBottomLeft + 0.5 * (pixelDeltaU + pixelDeltaV);
+    vec3 pixelCenter = pixel00Loc + (loc.x * pixelDeltaU) + (loc.y * pixelDeltaV);
+    
+    vec3 dir = normalize(pixelCenter - cameraCenter);
+    float a = 0.5 * (dir.y + 1);
+    vec3 skybox = (1.0 - a)*vec3(1.0) + a*vec3(0.5, 0.7, 1.0);
+
+    vec3 origin = cameraCenter;
+    vec3 pos;
+    float t;
+    for (t = 0.0; t < tMAX; t += 0.1) {
+        pos = origin + t*dir;
+        uvec3 cPos = clampPosition(pos);
+        uint index = positionToIndex(cPos);
+        bool inside = pos.x >= 0 && pos.y >= 0 && pos.z >= 0;
+        if (voxels[index] == 1 && inside) {
+            break;
+        }
+    }
+
+    vec3 color = t >= tMAX ? skybox : normalize(pos);
+
+    imageStore(outputImage, loc, vec4(color, 1.0));
 }

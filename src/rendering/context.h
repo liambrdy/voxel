@@ -56,6 +56,7 @@ struct RenderContext {
     VkRenderPass renderPass;
     VkDescriptorPool descriptorPool;
 
+    Buffer voxelData;
     Pipeline quadPipeline;
     Pipeline computePipeline;
     Image renderImage;
@@ -82,6 +83,8 @@ enum Result {
 
 Result InitializeRenderContext(SDL_Window *window);
 Result RenderFrame();
+
+void UploadVoxelData(const std::vector<int> &data);
 
 Result GetResultFromVkResult(VkResult res);
 
