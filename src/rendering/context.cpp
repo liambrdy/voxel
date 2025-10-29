@@ -4,6 +4,11 @@
 
 #include <SDL2/SDL_vulkan.h>
 
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
+#define VMA_IMPLEMENTATION
+#include <vma/vk_mem_alloc.h>
+
 RenderContext context = {};
 
 static Result CheckExtensions(const std::vector<const char *> &extensions, VkPhysicalDevice physicalDevice = VK_NULL_HANDLE) {
@@ -59,27 +64,6 @@ static Result CheckLayers(const std::vector<const char *> &layers) {
     } else {
         return LayerNotPresent;
     }
-}
-
-static inline VkSemaphore CreateSemaphore() {
-    VkSemaphoreCreateInfo info = GetSemaphoreCreateInfo();
-    VkSemaphore semaphore;
-    vkCreateSemaphore(context.device, &info, nullptr, &semaphore);
-    return semaphore;
-}
-
-static inline VkFence CreateFence(VkFenceCreateFlags flags) {
-    VkFenceCreateInfo info = GetFenceCreateInfo(flags);
-    VkFence fence;
-    vkCreateFence(context.device, &info, nullptr, &fence);
-    return fence;
-}
-
-static inline VkCommandBuffer AllocateCommandBuffer() {
-    VkCommandBufferAllocateInfo info = GetCommandBufferAllocateInfo(context.commandPool, 1);
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(context.device, &info, &cmd);
-    return cmd;
 }
 
 Result InitializeRenderContext(SDL_Window *window) {
@@ -161,6 +145,50 @@ Result InitializeRenderContext(SDL_Window *window) {
     VkCommandPoolCreateInfo poolInfo = GetCommandPoolCreateInfo(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, context.queueFamily);
     VkCheck(vkCreateCommandPool(context.device, &poolInfo, nullptr, &context.commandPool));
 
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 },
+    };
+    VkDescriptorPoolCreateInfo descriptorPoolInfo = GetDescriptorPoolCreateInfo(30, poolSizes);
+    VkCheck(vkCreateDescriptorPool(context.device, &descriptorPoolInfo, nullptr, &context.descriptorPool));
+
+    VmaVulkanFunctions functions = {};
+    functions.vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties;
+    functions.vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
+    functions.vkAllocateMemory = vkAllocateMemory;
+    functions.vkFreeMemory = vkFreeMemory;
+    functions.vkMapMemory = vkMapMemory;
+    functions.vkUnmapMemory = vkUnmapMemory;
+    functions.vkFlushMappedMemoryRanges = vkFlushMappedMemoryRanges;
+    functions.vkInvalidateMappedMemoryRanges = vkInvalidateMappedMemoryRanges;
+    functions.vkBindBufferMemory = vkBindBufferMemory;
+    functions.vkBindImageMemory = vkBindImageMemory;
+    functions.vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements;
+    functions.vkGetImageMemoryRequirements = vkGetImageMemoryRequirements;
+    functions.vkCreateBuffer = vkCreateBuffer;
+    functions.vkDestroyBuffer = vkDestroyBuffer;
+    functions.vkCreateImage = vkCreateImage;
+    functions.vkDestroyImage = vkDestroyImage;
+    functions.vkCmdCopyBuffer = vkCmdCopyBuffer;
+    functions.vkGetBufferMemoryRequirements2KHR = vkGetBufferMemoryRequirements2;
+    functions.vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2;
+    functions.vkBindBufferMemory2KHR = vkBindBufferMemory2;
+    functions.vkBindImageMemory2KHR = vkBindImageMemory2;
+    functions.vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2;
+    functions.vkGetDeviceBufferMemoryRequirements = vkGetDeviceBufferMemoryRequirements;
+    functions.vkGetDeviceImageMemoryRequirements = vkGetDeviceImageMemoryRequirements;
+
+    VmaAllocatorCreateInfo allocatorInfo = {};
+    allocatorInfo.flags = 0;
+    allocatorInfo.physicalDevice = context.physicalDevice;
+    allocatorInfo.device = context.device;
+    allocatorInfo.pVulkanFunctions = &functions;
+    allocatorInfo.instance = context.instance;
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+
+    VkCheck(vmaCreateAllocator(&allocatorInfo, &context.allocator));
+
     VkAttachmentDescription colorAttachment = {};
     colorAttachment.flags = 0;
     colorAttachment.format = context.swapchain.surfaceFormat.format;
@@ -205,36 +233,76 @@ Result InitializeRenderContext(SDL_Window *window) {
 
         context.framebuffers.push_back(framebuffer);
     }
+    
+    context.computePipeline = CreateComputePipeline("../../res/shaders/voxel.comp");
+    context.quadPipeline = CreateGraphicsPipeline({"../../res/shaders/screenquad.vert", "../../res/shaders/screenquad.frag"}, context.renderPass);
+    context.renderImage = CreateImage(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, context.swapchain.extent.width, context.swapchain.extent.height);
+
+    VkSamplerCreateInfo samplerInfo = GetSamplerCreateInfo();
+    VkCheck(vkCreateSampler(context.device, &samplerInfo, nullptr, &context.renderImageSampler));
+
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageInfo.imageView = context.renderImage.view;
+    
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.pNext = nullptr;
+    write.dstSet = context.computePipeline.set;
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    write.pImageInfo = &imageInfo;
+    write.pBufferInfo = nullptr;
+    write.pTexelBufferView = nullptr;
+    
+    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
+    
+    write.dstSet = context.quadPipeline.set;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    imageInfo.sampler = context.renderImageSampler;
+
+    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
 
     for (auto &frame : context.frames) {
-        frame.computeCmd = AllocateCommandBuffer();
-        frame.computeFence = CreateFence(VK_FENCE_CREATE_SIGNALED_BIT);
-        frame.computeFinishedSemaphore = CreateSemaphore();
-
         frame.graphicsCmd = AllocateCommandBuffer();
+        frame.computeCmd = AllocateCommandBuffer();
+
         frame.renderFence = CreateFence(VK_FENCE_CREATE_SIGNALED_BIT);
+        frame.computeFence = CreateFence(VK_FENCE_CREATE_SIGNALED_BIT);
         frame.imageAvailableSemaphore = CreateSemaphore();
-        frame.renderFinishedSemaphore = CreateSemaphore();
+        frame.computeDoneSemaphore = CreateSemaphore();
     }
+
+    VkCommandBuffer cmd = BeginSingleUseCmd();
+
+    SetImageLayout(cmd, context.renderImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+    EndSingleUseCmd(cmd);
 
     return Success;
 }
 
 Result RenderFrame() {
     FrameData &frame = context.frames[context.frameCount % MaxFramesInFlight];
+
     vkWaitForFences(context.device, 1, &frame.computeFence, VK_TRUE, UINT64_MAX);
     vkResetFences(context.device, 1, &frame.computeFence);
 
-    vkResetCommandBuffer(frame.computeCmd, 0);
-
     VkCommandBufferBeginInfo beginInfo = GetCommandBufferBeginInfo(0);
     vkBeginCommandBuffer(frame.computeCmd, &beginInfo);
+
+    vkCmdBindPipeline(frame.computeCmd, VK_PIPELINE_BIND_POINT_COMPUTE, context.computePipeline.pipeline);
+    vkCmdBindDescriptorSets(frame.computeCmd, VK_PIPELINE_BIND_POINT_COMPUTE, context.computePipeline.layout, 0, 1, &context.computePipeline.set, 0, nullptr);
+
+    vkCmdDispatch(frame.computeCmd, context.renderImage.width / 16, context.renderImage.height / 16, 1);
+
     vkEndCommandBuffer(frame.computeCmd);
 
     std::vector<VkSemaphore> waitSemaphores = {};
-    std::vector<VkSemaphore> signalSemaphores = {frame.computeFinishedSemaphore};
-    std::vector<VkPipelineStageFlags> waitFlags = {};
-
+    std::vector<VkSemaphore> signalSemaphores = {frame.computeDoneSemaphore};
+    std::vector<VkPipelineStageFlags> waitFlags = {VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
     VkSubmitInfo submitInfo = GetSubmitInfo(&frame.computeCmd, waitSemaphores, waitFlags, signalSemaphores);
     VkCheck(vkQueueSubmit(context.queue, 1, &submitInfo, frame.computeFence));
 
@@ -251,17 +319,21 @@ Result RenderFrame() {
         VkRenderPassBeginInfo passBeginInfo = GetRenderPassBeginInfo(context.renderPass, context.framebuffers[imageIndex], context.swapchain.extent, {1.0f, 0.0f, 0.0f, 1.0f});
         
         vkCmdBeginRenderPass(frame.graphicsCmd, &passBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(frame.graphicsCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, context.quadPipeline.pipeline);
+        vkCmdBindDescriptorSets(frame.graphicsCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, context.quadPipeline.layout, 0, 1, &context.quadPipeline.set, 0, nullptr);
+        vkCmdDraw(frame.graphicsCmd, 4, 1, 0, 0);
         vkCmdEndRenderPass(frame.graphicsCmd);
     }
     vkEndCommandBuffer(frame.graphicsCmd);
 
-    waitSemaphores = {frame.computeFinishedSemaphore, frame.imageAvailableSemaphore};
-    signalSemaphores = {frame.renderFinishedSemaphore};
+    waitSemaphores = {frame.computeDoneSemaphore, frame.imageAvailableSemaphore};
+    signalSemaphores = {context.swapchain.submitReadySemaphores[imageIndex]};
     waitFlags = {VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
     submitInfo = GetSubmitInfo(&frame.graphicsCmd, waitSemaphores, waitFlags, signalSemaphores);
     VkCheck(vkQueueSubmit(context.queue, 1, &submitInfo, frame.renderFence));
 
-    waitSemaphores = {frame.renderFinishedSemaphore};
+    waitSemaphores = {context.swapchain.submitReadySemaphores[imageIndex]};
     VkPresentInfoKHR presentInfo = GetPresentInfo(waitSemaphores, &context.swapchain.swapchain, &imageIndex);
     VkCheck(vkQueuePresentKHR(context.queue, &presentInfo));
 

@@ -4,10 +4,14 @@
 #include <Volk/volk.h>
 #include <SDL2/SDL.h>
 #include <vulkan/vk_enum_string_helper.h>
+#include <vma/vk_mem_alloc.h>
 
 #include <array>
 
 #include "swapchain.h"
+#include "pipeline.h"
+#include "image.h"
+#include "buffer.h"
 
 #ifdef VOXEL_DEBUG
 #define VkCheck(res) {\
@@ -29,20 +33,20 @@
 }
 
 struct FrameData {
-    VkCommandBuffer computeCmd;
     VkCommandBuffer graphicsCmd;
-
-    VkFence computeFence;
-    VkSemaphore computeFinishedSemaphore;
+    VkCommandBuffer computeCmd;
 
     VkFence renderFence;
+    VkFence computeFence;
     VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
+    VkSemaphore computeDoneSemaphore;
 };
 
 constexpr uint32_t MaxFramesInFlight = 2;
 
 struct RenderContext {
+    VmaAllocator allocator;
+
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
     VkDevice device;
@@ -50,6 +54,12 @@ struct RenderContext {
     VkSurfaceKHR surface;
     VkCommandPool commandPool;
     VkRenderPass renderPass;
+    VkDescriptorPool descriptorPool;
+
+    Pipeline quadPipeline;
+    Pipeline computePipeline;
+    Image renderImage;
+    VkSampler renderImageSampler;
 
     Swapchain swapchain;
     std::vector<VkFramebuffer> framebuffers;

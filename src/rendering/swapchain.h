@@ -17,6 +17,8 @@ struct Swapchain {
 
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
+
+    std::vector<VkSemaphore> submitReadySemaphores;
 };
 
 enum Result;

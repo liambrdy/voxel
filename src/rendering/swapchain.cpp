@@ -10,7 +10,7 @@ static VkSurfaceFormatKHR GetSwapchainSurfaceFormat() {
     vkGetPhysicalDeviceSurfaceFormatsKHR(context.physicalDevice, context.surface, &formatCount, formats.data());
 
     for (const auto &f : formats) {
-        if (f.format == VK_FORMAT_R8G8B8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        if (f.format == VK_FORMAT_R8G8B8A8_UNORM && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
             return f;
     }
 
@@ -62,11 +62,14 @@ Result CreateSwapchain(Swapchain *swapchain, bool vsync) {
     vkGetSwapchainImagesKHR(context.device, swapchain->swapchain, &swapchainImageCount, swapchain->images.data());
 
     swapchain->imageViews.resize(swapchainImageCount);
+    swapchain->submitReadySemaphores.resize(swapchainImageCount);
 
     for (uint32_t i = 0; i < swapchainImageCount; i++) {
         VkImageViewCreateInfo viewInfo = GetImageViewCreateInfo(swapchain->images[i], swapchain->surfaceFormat.format, VK_IMAGE_ASPECT_COLOR_BIT);
 
         VkCheck(vkCreateImageView(context.device, &viewInfo, nullptr, &swapchain->imageViews[i]));
+
+        swapchain->submitReadySemaphores[i] = CreateSemaphore();
     }
 
     return Success;

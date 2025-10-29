@@ -229,7 +229,7 @@ VkShaderModuleCreateInfo GetShaderModuleCreateInfo(const std::vector<uint32_t> &
     info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     info.pNext = nullptr;
     info.flags = 0;
-    info.codeSize = (uint32_t)code.size();
+    info.codeSize = 4 * (uint32_t)code.size();
     info.pCode = code.data();
 
     return info;
@@ -268,6 +268,8 @@ VkPipelineInputAssemblyStateCreateInfo GetPipelineInputAssemblyStateCreateInfo(V
     info.flags = 0;
     info.topology = topology;
     info.primitiveRestartEnable = VK_FALSE;
+
+    return info;
 }
 
 VkPipelineTessellationStateCreateInfo GetPipelineTessellationStateCreateInfo() {
@@ -294,4 +296,200 @@ VkPipelineViewportStateCreateInfo GetPipelineViewportStateCreateInfo(VkViewport 
     info.pScissors = &scissor;
 
     return info;
+}
+
+VkPipelineRasterizationStateCreateInfo GetPipelineRasterizationStateCreateInfo(VkPolygonMode polygonMode, float lineWidth) {
+    VkPipelineRasterizationStateCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.depthClampEnable = VK_FALSE;
+    info.rasterizerDiscardEnable = VK_FALSE;
+    info.polygonMode = polygonMode;
+    info.cullMode = VK_CULL_MODE_NONE;
+    info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    info.depthBiasEnable = VK_FALSE;
+    info.depthBiasConstantFactor = 0.0f;
+    info.depthBiasClamp = 0.0f;
+    info.depthBiasSlopeFactor = 0.0f;
+    info.lineWidth = lineWidth;
+
+    return info;
+}
+
+VkPipelineMultisampleStateCreateInfo GetPipelineMultisampleStateCreateInfo(VkSampleCountFlagBits samples) {
+    static VkSampleMask mask = 0xFFFFFFFF;
+
+    VkPipelineMultisampleStateCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.rasterizationSamples = samples;
+    info.sampleShadingEnable = VK_FALSE;
+    info.minSampleShading = 0.0f;
+    info.pSampleMask = &mask;
+    info.alphaToCoverageEnable = VK_FALSE;
+    info.alphaToOneEnable = VK_FALSE;
+
+    return info;
+}
+
+VkPipelineDepthStencilStateCreateInfo GetPipelineDepthStencilStateCreateInfo() {
+    VkPipelineDepthStencilStateCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.depthTestEnable = VK_FALSE;
+    info.depthWriteEnable = VK_FALSE;
+    info.depthCompareOp = VK_COMPARE_OP_NEVER;
+    info.depthBoundsTestEnable = VK_FALSE;
+    info.stencilTestEnable = VK_FALSE;
+    info.front = {};
+    info.back = {};
+    info.minDepthBounds = 0.0f;
+    info.maxDepthBounds = 0.0f;
+
+    return info;
+}
+
+VkPipelineColorBlendStateCreateInfo GetPipelineColorBlendstateCreateInfo() {
+    static VkPipelineColorBlendAttachmentState attachment = {};
+    attachment.blendEnable = VK_FALSE;
+    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    
+    VkPipelineColorBlendStateCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.logicOpEnable = VK_FALSE;
+    info.logicOp = VK_LOGIC_OP_AND;
+    info.attachmentCount = 1;
+    info.pAttachments = &attachment;
+
+    return info;
+}
+
+VkPipelineDynamicStateCreateInfo GetPipelineDynamicStateCreateInfo(const std::vector<VkDynamicState> &states) {
+    VkPipelineDynamicStateCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.dynamicStateCount = (uint32_t)states.size();
+    info.pDynamicStates = states.data();
+
+    return info;
+}
+
+VkPipelineLayoutCreateInfo GetPipelineLayoutCreateInfo(const std::vector<VkDescriptorSetLayout> &setLayouts, const std::vector<VkPushConstantRange> &pushConstants) {
+    VkPipelineLayoutCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.setLayoutCount = (uint32_t)setLayouts.size();
+    info.pSetLayouts = setLayouts.data();
+    info.pushConstantRangeCount = (uint32_t)pushConstants.size();
+    info.pPushConstantRanges = pushConstants.data();
+
+    return info;
+}
+
+VkDescriptorPoolCreateInfo GetDescriptorPoolCreateInfo(uint32_t maxSets, const std::vector<VkDescriptorPoolSize> &poolSizes) {
+    VkDescriptorPoolCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.maxSets = maxSets;
+    info.poolSizeCount = (uint32_t)poolSizes.size();
+    info.pPoolSizes = poolSizes.data();
+
+    return info;
+}
+
+VkDescriptorSetLayoutCreateInfo GetDescriptorsetLayoutCreatInfo(const std::vector<VkDescriptorSetLayoutBinding> &bindings) {
+    VkDescriptorSetLayoutCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.bindingCount = (uint32_t)bindings.size();
+    info.pBindings = bindings.data();
+
+    return info;
+}
+
+VkDescriptorSetAllocateInfo GetDescriptorSetAllocateInfo(VkDescriptorPool pool, const std::vector<VkDescriptorSetLayout> &layouts) {
+    VkDescriptorSetAllocateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    info.pNext = nullptr;
+    info.descriptorPool = pool;
+    info.descriptorSetCount = (uint32_t)layouts.size();
+    info.pSetLayouts = layouts.data();
+
+    return info;
+}
+
+VkSamplerCreateInfo GetSamplerCreateInfo() {
+    VkSamplerCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.magFilter = VK_FILTER_NEAREST;
+    info.minFilter = VK_FILTER_NEAREST;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.mipLodBias = 1.0f;
+    info.anisotropyEnable = VK_FALSE;
+    info.maxAnisotropy = 0.0f;
+    info.compareEnable = VK_FALSE;
+    info.compareOp = VK_COMPARE_OP_NEVER;
+    info.minLod = 0.0f;
+    info.maxLod = 1.0f;
+    info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    info.unnormalizedCoordinates = VK_FALSE;
+    
+    return info;
+}
+
+VkSemaphore CreateSemaphore() {
+    VkSemaphoreCreateInfo info = GetSemaphoreCreateInfo();
+    VkSemaphore semaphore;
+    vkCreateSemaphore(context.device, &info, nullptr, &semaphore);
+    return semaphore;
+}
+
+VkFence CreateFence(VkFenceCreateFlags flags) {
+    VkFenceCreateInfo info = GetFenceCreateInfo(flags);
+    VkFence fence;
+    vkCreateFence(context.device, &info, nullptr, &fence);
+    return fence;
+}
+
+VkCommandBuffer AllocateCommandBuffer() {
+    VkCommandBufferAllocateInfo info = GetCommandBufferAllocateInfo(context.commandPool, 1);
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(context.device, &info, &cmd);
+    return cmd;
+}
+
+VkCommandBuffer BeginSingleUseCmd() {
+    VkCommandBuffer cmd = AllocateCommandBuffer();
+    VkCommandBufferBeginInfo info = GetCommandBufferBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    vkBeginCommandBuffer(cmd, &info);
+
+    return cmd;
+}
+
+void EndSingleUseCmd(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo info = GetSubmitInfo(&cmd, {}, {}, {});
+    vkQueueSubmit(context.queue, 1, &info, VK_NULL_HANDLE);
+    vkQueueWaitIdle(context.queue);
 }

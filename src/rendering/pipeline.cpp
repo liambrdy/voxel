@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include <shaderc/shaderc.hpp>
+#include <spirv_cross/spirv_reflect.hpp>
 
 #include "vkutil.h"
 #include "context.h"
@@ -39,9 +40,9 @@ static std::vector<uint32_t> CompileShader(shaderc_shader_kind kind, const std::
 }
 
 static inline shaderc_shader_kind ExtToKind(const std::string &ext) {
-    if (ext == "vert") return shaderc_vertex_shader;
-    else if (ext == "frag") return shaderc_fragment_shader;
-    else if (ext == "comp") return shaderc_compute_shader;
+    if (ext == ".vert") return shaderc_vertex_shader;
+    else if (ext == ".frag") return shaderc_fragment_shader;
+    else if (ext == ".comp") return shaderc_compute_shader;
 
     printf("Failed to detect shader kind: %s\n", ext.c_str());
     assert(false);
@@ -65,12 +66,14 @@ static inline VkShaderStageFlagBits KindToStage(shaderc_shader_kind kind) {
 
 Pipeline CreateGraphicsPipeline(const std::vector<std::string> &shaderPaths, VkRenderPass renderPass) {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
+    std::vector<uint32_t> fragCode;
 
     for (auto &shaderPath : shaderPaths) {
         std::filesystem::path p(shaderPath);
         auto ext = p.extension().string();
         shaderc_shader_kind kind = ExtToKind(ext);
         auto code = CompileShader(kind, shaderPath);
+        if (kind == shaderc_fragment_shader) fragCode = code;
         
         VkShaderModule mod;
         VkShaderModuleCreateInfo moduleInfo = GetShaderModuleCreateInfo(code);
@@ -80,14 +83,40 @@ Pipeline CreateGraphicsPipeline(const std::vector<std::string> &shaderPaths, VkR
         VkPipelineShaderStageCreateInfo stageInfo = GetPipelineShaderStageCreateInfo(stage, mod);
         stages.push_back(stageInfo);
     }
+    
+    Pipeline pipeline = {};
+
+    spirv_cross::Compiler comp(std::move(fragCode));
+    spirv_cross::ShaderResources resources = comp.get_shader_resources();
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    for (const auto &image : resources.sampled_images) {
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = comp.get_decoration(image.id, spv::DecorationBinding);
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        binding.pImmutableSamplers = nullptr;
+        bindings.push_back(binding);
+    }
+
+    VkDescriptorSetLayoutCreateInfo setLayoutInfo = GetDescriptorsetLayoutCreatInfo(bindings);
+    vkCreateDescriptorSetLayout(context.device, &setLayoutInfo, nullptr, &pipeline.setLayout);
+
+    std::vector<VkDescriptorSetLayout> layouts = {pipeline.setLayout};
+    VkDescriptorSetAllocateInfo setAllocInfo = GetDescriptorSetAllocateInfo(context.descriptorPool, layouts);
+    vkAllocateDescriptorSets(context.device, &setAllocInfo, &pipeline.set);
+
+    VkPipelineLayoutCreateInfo layoutInfo = GetPipelineLayoutCreateInfo(layouts, {});
+    vkCreatePipelineLayout(context.device, &layoutInfo, nullptr, &pipeline.layout);
 
     VkRect2D scissor = {};
     scissor.extent = context.swapchain.extent;
     scissor.offset = {0, 0};
 
     VkViewport viewport = {};
-    viewport.width = scissor.extent.width;
-    viewport.height = scissor.extent.height;
+    viewport.width = (float)scissor.extent.width;
+    viewport.height = (float)scissor.extent.height;
     viewport.x = 0;
     viewport.y = 0;
     viewport.minDepth = 0.0f;
@@ -97,7 +126,11 @@ Pipeline CreateGraphicsPipeline(const std::vector<std::string> &shaderPaths, VkR
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo = GetPipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
     VkPipelineTessellationStateCreateInfo tessellationInfo = GetPipelineTessellationStateCreateInfo();
     VkPipelineViewportStateCreateInfo viewportInfo = GetPipelineViewportStateCreateInfo(viewport, scissor);
-    VkPipelineRasterizationStateCreateInfo rasterizationInfo
+    VkPipelineRasterizationStateCreateInfo rasterizationInfo = GetPipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, 1.0f);
+    VkPipelineMultisampleStateCreateInfo multisampleInfo = GetPipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT);
+    VkPipelineDepthStencilStateCreateInfo depthStencilInfo = GetPipelineDepthStencilStateCreateInfo();
+    VkPipelineColorBlendStateCreateInfo colorBlendInfo = GetPipelineColorBlendstateCreateInfo();
+    VkPipelineDynamicStateCreateInfo dynamicInfo = GetPipelineDynamicStateCreateInfo({});
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -109,14 +142,75 @@ Pipeline CreateGraphicsPipeline(const std::vector<std::string> &shaderPaths, VkR
     pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
     pipelineInfo.pTessellationState = &tessellationInfo;
     pipelineInfo.pViewportState = &viewportInfo;
-    pipelineInfo.pRasterizationState;
-    pipelineInfo.pMultisampleState;
-    pipelineInfo.pDepthStencilState;
-    pipelineInfo.pColorBlendState;
-    pipelineInfo.pDynamicState;
-    pipelineInfo.layout;
+    pipelineInfo.pRasterizationState = &rasterizationInfo;
+    pipelineInfo.pMultisampleState = &multisampleInfo;
+    pipelineInfo.pDepthStencilState = &depthStencilInfo;
+    pipelineInfo.pColorBlendState = &colorBlendInfo;
+    pipelineInfo.pDynamicState = &dynamicInfo;
+    pipelineInfo.layout = pipeline.layout;
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
     pipelineInfo.basePipelineIndex = 0;
+
+    vkCreateGraphicsPipelines(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.pipeline);
+
+    return pipeline;
+}
+
+Pipeline CreateComputePipeline(const std::string &shaderPath) {
+    std::vector<uint32_t> code = CompileShader(shaderc_compute_shader, shaderPath);
+    VkShaderModuleCreateInfo moduleInfo = GetShaderModuleCreateInfo(code);
+    VkShaderModule mod;
+    vkCreateShaderModule(context.device, &moduleInfo, nullptr, &mod);
+    VkPipelineShaderStageCreateInfo stageInfo = GetPipelineShaderStageCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, mod);
+
+    spirv_cross::Compiler comp(std::move(code));
+    spirv_cross::ShaderResources resources = comp.get_shader_resources();
+
+    Pipeline pipeline = {};
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    for (const auto &image : resources.storage_images) {
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = comp.get_decoration(image.id, spv::DecorationBinding);
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        binding.pImmutableSamplers = nullptr;
+        bindings.push_back(binding);
+    }
+
+    for (const auto &buffer : resources.storage_buffers) {
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = comp.get_decoration(buffer.id, spv::DecorationBinding);
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        binding.pImmutableSamplers = nullptr;
+        bindings.push_back(binding);
+    }
+
+    VkDescriptorSetLayoutCreateInfo setLayoutInfo = GetDescriptorsetLayoutCreatInfo(bindings);
+    vkCreateDescriptorSetLayout(context.device, &setLayoutInfo, nullptr, &pipeline.setLayout);
+
+    std::vector<VkDescriptorSetLayout> layouts = {pipeline.setLayout};
+    VkDescriptorSetAllocateInfo setAllocInfo = GetDescriptorSetAllocateInfo(context.descriptorPool, layouts);
+    vkAllocateDescriptorSets(context.device, &setAllocInfo, &pipeline.set);
+
+    VkPipelineLayoutCreateInfo layoutInfo = GetPipelineLayoutCreateInfo(layouts, {});
+    vkCreatePipelineLayout(context.device, &layoutInfo, nullptr, &pipeline.layout);
+
+    VkComputePipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.pNext = nullptr;
+    pipelineInfo.flags = 0;
+    pipelineInfo.stage = stageInfo;
+    pipelineInfo.layout = pipeline.layout;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineInfo.basePipelineIndex = 0;
+
+    vkCreateComputePipelines(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.pipeline);
+
+    return pipeline;
 }
